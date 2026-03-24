@@ -288,6 +288,23 @@ static int set_client_status_by_sockfd(int sockfd, const char *status) {
     return ok;
 }
 
+static int wake_client_to_active_by_sockfd(int sockfd) {
+    int changed = 0;
+
+    pthread_mutex_lock(&mutex_lista);
+    int idx = find_client_index_by_sockfd(sockfd);
+    if (idx != -1) {
+        if (strcmp(lista[idx].status, STATUS_ACTIVO) != 0) {
+            safe_copy(lista[idx].status, sizeof(lista[idx].status), STATUS_ACTIVO);
+            changed = 1;
+        }
+        lista[idx].ultimo_mensaje = time(NULL);
+    }
+    pthread_mutex_unlock(&mutex_lista);
+
+    return changed;
+}
+
 static int build_user_list(char *out, size_t out_size) {
     size_t used = 0;
     int count = 0;
@@ -508,11 +525,23 @@ static void *client_thread(void *arg) {
 
         switch (pkt.command) {
             case CMD_BROADCAST:
+                if (wake_client_to_active_by_sockfd(clientfd)) {
+                    log_msg("STATUS", "'%s' volvió a %s al enviar broadcast",
+                            username, STATUS_ACTIVO);
+                    send_packet(clientfd, CMD_OK, "SERVER", username, STATUS_ACTIVO);
+                }
+
                 log_msg("BROADCAST", "%s: %s", username, pkt.payload);
                 broadcast_chat_message(username, pkt.payload);
                 break;
 
             case CMD_DIRECT: {
+                if (wake_client_to_active_by_sockfd(clientfd)) {
+                    log_msg("STATUS", "'%s' volvió a %s al enviar mensaje privado",
+                            username, STATUS_ACTIVO);
+                    send_packet(clientfd, CMD_OK, "SERVER", username, STATUS_ACTIVO);
+                }
+
                 int targetfd = get_sockfd_by_username(pkt.target);
                 if (targetfd == -1) {
                     log_msg("DIRECT", "%s intentó escribir a '%s', pero no está conectado",
